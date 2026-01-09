@@ -190,39 +190,6 @@ Execute CLI commands on a single NX-OS device.
 - `password` (optional): Password for authentication
 - `timeout` (optional): Request timeout in seconds (default: 30)
 
-**Examples:**
-
-Show commands:
-```json
-{
-  "ip_address": "192.168.1.1",
-  "commands": ["show version", "show interface brief"]
-}
-```
-
-Configuration commands:
-```json
-{
-  "ip_address": "10.0.0.5",
-  "commands": [
-    "configure terminal",
-    "interface Ethernet1/1",
-    "description Uplink to Core",
-    "no shutdown",
-    "end"
-  ]
-}
-```
-
-With JSON response format:
-```json
-{
-  "ip_address": "192.168.1.10",
-  "commands": ["show running-config interface"],
-  "response_format": "json"
-}
-```
-
 #### 2. nxos_execute_commands_multi
 
 Execute the same CLI commands on multiple NX-OS devices concurrently.
@@ -235,38 +202,6 @@ Execute the same CLI commands on multiple NX-OS devices concurrently.
 - `password` (optional): Password for authentication
 - `timeout` (optional): Request timeout in seconds per device (default: 30)
 - `continue_on_error` (optional): Continue executing on other devices if one fails (default: true)
-
-**Examples:**
-
-Gather version information from multiple switches:
-```json
-{
-  "ip_addresses": ["192.168.1.1", "192.168.1.2", "192.168.1.3"],
-  "commands": ["show version"]
-}
-```
-
-Check interface status across fabric:
-```json
-{
-  "ip_addresses": ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"],
-  "commands": ["show interface status", "show interface description"]
-}
-```
-
-Configuration change across multiple devices:
-```json
-{
-  "ip_addresses": ["192.168.1.10", "192.168.1.11"],
-  "commands": [
-    "configure terminal",
-    "logging server 10.1.1.1",
-    "logging source-interface loopback0",
-    "end"
-  ],
-  "continue_on_error": false
-}
-```
 
 ## NX-API Configuration
 
