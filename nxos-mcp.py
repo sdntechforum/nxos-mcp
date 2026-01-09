@@ -313,6 +313,25 @@ async def execute_cli_command(
             "error": f"Unexpected error: {type(e).__name__}: {str(e)}"
         }
 
+def format_multi_device_text_response(results: List[Dict[str, Any]]) -> str:
+    """Format multi-device command results as plain text."""
+    success_count = sum(1 for r in results if r["success"])
+    total_count = len(results)
+    
+    lines = [
+        "Multi-Device Command Execution",
+        "=" * 80,
+        f"Summary: {success_count}/{total_count} devices succeeded",
+        "",
+        ""
+    ]
+    
+    for result in results:
+        lines.append(format_text_response(result))
+        lines.append("")
+    
+    return "\n".join(lines)
+
 # ============================================================================
 # MCP Tools
 # ============================================================================
