@@ -313,6 +313,45 @@ async def execute_cli_command(
             "error": f"Unexpected error: {type(e).__name__}: {str(e)}"
         }
 
+def format_http_error(error: httpx.HTTPStatusError) -> str:
+    """Format HTTP error with helpful context."""
+    status = error.response.status_code
+    
+    if status == 401:
+        return "Authentication failed. Check username and password in .env file."
+    elif status == 403:
+        return "Permission denied. User may not have sufficient privileges."
+    elif status == 404:
+        return "NX-API endpoint not found. Verify the device supports NX-API."
+    elif status == 500:
+        return "Internal server error on device. Check command syntax or device status."
+    else:
+        return f"HTTP {status} error: {error.response.text[:200]}"
+
+def format_text_response(result: Dict[str, Any]) -> str:
+    """Format command results as plain text."""
+    lines = [f"Device: {result['device']}", "=" * 80]
+    
+    if not result["success"]:
+        lines.append(f"ERROR: {result['error']}")
+        return "\n".join(lines)
+    
+    lines.append("Status: Success")
+    lines.append("")
+    
+    for cmd_result in result["results"]:
+        lines.append(f"Command: {cmd_result['command']}")
+        lines.append("-" * 80)
+        
+        if "error" in cmd_result:
+            lines.append(f"ERROR ({cmd_result.get('code', 'unknown')}): {cmd_result['error']}")
+        else:
+            lines.append(cmd_result["output"])
+        
+        lines.append("")
+    
+    return "\n".join(lines)
+
 def format_multi_device_text_response(results: List[Dict[str, Any]]) -> str:
     """Format multi-device command results as plain text."""
     success_count = sum(1 for r in results if r["success"])
