@@ -352,7 +352,8 @@ The server provides detailed error messages for common scenarios:
 
 ### Testing
 
-# Run with MCP Inspector
+#### Run with MCP Inspector
+```bash
 npx @modelcontextprotocol/inspector uv run nxos_cli_mcp.py
 ```
 
