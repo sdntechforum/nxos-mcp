@@ -185,6 +185,85 @@ class MultiDeviceCommandInput(BaseModel):
 # Helper Functions
 # ============================================================================
 
+def is_config_command(commands: List[str]) -> bool:
+    """
+    Detect if commands contain configuration mode commands.
+    Returns True if any command starts with 'conf' or 'configure'.
+    """
+    config_prefixes = ('conf t', 'conf', 'configure terminal', 'configure')
+    for cmd in commands:
+        cmd_lower = cmd.lower().strip()
+        if any(cmd_lower.startswith(prefix) for prefix in config_prefixes):
+            return True
+    return False
+
+
+def build_jsonrpc_payload(commands: List[str]) -> List[Dict[str, Any]]:
+    """
+    Build JSON-RPC payload for configuration commands.
+    Each command becomes a separate JSON-RPC request with sequential IDs.
+    """
+    payload = []
+    for i, cmd in enumerate(commands, start=1):
+        payload.append({
+            "jsonrpc": "2.0",
+            "method": "cli",
+            "params": {
+                "cmd": cmd,
+                "version": 1
+            },
+            "id": i
+        })
+    return payload
+
+
+def parse_jsonrpc_response(
+    response_data: List[Dict[str, Any]],
+    commands: List[str]
+) -> List[Dict[str, Any]]:
+    """
+    Parse JSON-RPC response format into standardized results.
+    """
+    results = []
+    for i, resp in enumerate(response_data):
+        cmd = commands[i] if i < len(commands) else "unknown"
+
+        if "error" in resp:
+            error_info = resp["error"]
+            results.append({
+                "command": cmd,
+                "output": "",
+                "error": error_info.get("message", str(error_info)),
+                "code": error_info.get("code", "unknown")
+            })
+        else:
+            # Extract result - can be string, dict, or None
+            result = resp.get("result", "")
+            if result is None:
+                result = ""
+            elif isinstance(result, dict):
+                # Handle structured response (may contain 'msg' or 'body')
+                if "msg" in result:
+                    result = result["msg"]
+                elif "body" in result:
+                    body = result["body"]
+                    if isinstance(body, dict):
+                        result = json.dumps(body, indent=2)
+                    else:
+                        result = str(body) if body else ""
+                else:
+                    result = json.dumps(result, indent=2)
+            elif not isinstance(result, str):
+                result = str(result)
+
+            results.append({
+                "command": cmd,
+                "output": result
+            })
+
+    return results
+
+
 def get_credentials(username: Optional[str], password: Optional[str]) -> tuple[str, str]:
     """
     Get credentials from parameters or environment variables.
@@ -221,26 +300,42 @@ async def execute_cli_command(
 ) -> Dict[str, Any]:
     """
     Execute CLI commands on a single NX-OS device via NX-API.
+    Automatically detects configuration commands and uses JSON-RPC format.
     """
     url = f"https://{ip_address}/ins"
     auth_header = create_auth_header(username, password)
-    payload = {
-        "ins_api": {
-            "version": "1.0",
-            "type": "cli_show_ascii",
-            "chunk": "0",
-            "sid": "1",
-            "input": " ;".join(commands),
-            "output_format": "text"
-        }
-    }
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": auth_header
-    }
 
-    logger.info("Sending %d command(s) to device %s (timeout=%ss)", 
-                len(commands), ip_address, timeout)
+    # Detect if this is a configuration command sequence
+    use_jsonrpc = is_config_command(commands)
+
+    if use_jsonrpc:
+        # Use JSON-RPC format for configuration commands
+        payload = build_jsonrpc_payload(commands)
+        headers = {
+            "Content-Type": "application/json-rpc",
+            "Authorization": auth_header
+        }
+        logger.info("Sending %d config command(s) to device %s via JSON-RPC (timeout=%ss)",
+                    len(commands), ip_address, timeout)
+    else:
+        # Use ins_api format for show commands
+        payload = {
+            "ins_api": {
+                "version": "1.0",
+                "type": "cli_show_ascii",
+                "chunk": "0",
+                "sid": "1",
+                "input": " ;".join(commands),
+                "output_format": "text"
+            }
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": auth_header
+        }
+        logger.info("Sending %d show command(s) to device %s via ins_api (timeout=%ss)",
+                    len(commands), ip_address, timeout)
+
     logger.debug("Request URL: %s", url)
     logger.debug("Request payload: %s", json.dumps(payload))
 
@@ -251,44 +346,58 @@ async def execute_cli_command(
             response.raise_for_status()
             data = response.json()
 
-        # Parse response
-        if "ins_api" in data and "outputs" in data["ins_api"]:
+        # Parse response based on format used
+        if use_jsonrpc:
+            # Parse JSON-RPC response format
+            if not isinstance(data, list):
+                data = [data]
+            results = parse_jsonrpc_response(data, commands)
+            logger.info("Config commands on %s completed successfully", ip_address)
+            return {
+                "success": True,
+                "device": ip_address,
+                "results": results
+            }
+        else:
+            # Parse ins_api response format
+            if "ins_api" in data and "outputs" in data["ins_api"]:
                 outputs = data["ins_api"]["outputs"]["output"]
                 if not isinstance(outputs, list):
                     outputs = [outputs]
-                
+
                 results = []
                 for i, output in enumerate(outputs):
+                    # Extract body and ensure it's a string
+                    body = output.get("body", "")
+                    if isinstance(body, dict):
+                        body = json.dumps(body, indent=2)
+                    elif not isinstance(body, str):
+                        body = str(body)
+
                     result = {
                         "command": commands[i] if i < len(commands) else "unknown",
-                        "output": output.get("body", "")
+                        "output": body
                     }
-                    
+
                     # Include error info if present
                     if output.get("code") != "200":
                         result["error"] = output.get("msg", "Command failed")
                         result["code"] = output.get("code", "unknown")
-                    
+
                     results.append(result)
-                
+
+                logger.info("Show commands on %s completed successfully", ip_address)
                 return {
                     "success": True,
                     "device": ip_address,
                     "results": results
                 }
-        else:
-            return {
+            else:
+                return {
                     "success": False,
                     "device": ip_address,
                     "error": f"Unexpected response format: {data}"
                 }
-
-        logger.info("Commands on %s completed successfully", ip_address)
-        return {
-            "success": True,
-            "device": ip_address,
-            "results": results
-        }
 
     except httpx.HTTPStatusError as e:
         error_msg = format_http_error(e)
