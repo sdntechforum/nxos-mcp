@@ -42,6 +42,15 @@ DEFAULT_TIMEOUT = 30.0
 MAX_DEVICES = 50
 MAX_COMMANDS = 100
 
+# Parse NXOS_HOSTS from .env — comma-separated list of device IPs/hostnames.
+# Used as the default device list when no ip_address(es) are provided in a tool call.
+_hosts_env = os.getenv("NXOS_HOSTS", os.getenv("NXOS_HOST", ""))
+DEFAULT_DEVICE_LIST: List[str] = [h.strip() for h in _hosts_env.split(",") if h.strip()]
+if DEFAULT_DEVICE_LIST:
+    logger.info("Loaded %d default device(s) from NXOS_HOSTS: %s", len(DEFAULT_DEVICE_LIST), DEFAULT_DEVICE_LIST)
+else:
+    logger.warning("No default devices configured. Set NXOS_HOSTS in .env or supply ip_address at call time.")
+
 class ResponseFormat(str, Enum):
     """Response format for tool output."""
     TEXT = "text"
@@ -60,9 +69,12 @@ class SingleDeviceCommandInput(BaseModel):
         extra='forbid'
     )
 
-    ip_address: str = Field(
-        ...,
-        description="IP address or hostname of the NX-OS device (e.g., '192.168.1.1', '10.0.0.5')",
+    ip_address: Optional[str] = Field(
+        default=None,
+        description=(
+            "IP address or hostname of the NX-OS device (e.g., '192.168.1.1'). "
+            "If omitted, the first device from NXOS_HOSTS in .env is used."
+        ),
         min_length=7,
         max_length=253
     )
@@ -120,9 +132,12 @@ class MultiDeviceCommandInput(BaseModel):
         extra='forbid'
     )
 
-    ip_addresses: List[str] = Field(
-        ...,
-        description="List of IP addresses or hostnames of NX-OS devices (e.g., ['192.168.1.1', '10.0.0.5'])",
+    ip_addresses: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "List of IP addresses or hostnames of NX-OS devices (e.g., ['192.168.1.1', '10.0.0.5']). "
+            "If omitted, all devices from NXOS_HOSTS in .env are used."
+        ),
         min_length=1,
         max_length=MAX_DEVICES
     )
@@ -486,9 +501,17 @@ def format_multi_device_text_response(results: List[Dict[str, Any]]) -> str:
 
 @mcp.tool()
 async def nxos_execute_commands(params: SingleDeviceCommandInput) -> str:
+    # Resolve ip_address: use provided value, else fall back to first default device
+    ip = params.ip_address
+    if not ip:
+        if not DEFAULT_DEVICE_LIST:
+            return "Error: No ip_address provided and NXOS_HOSTS is not set in .env"
+        ip = DEFAULT_DEVICE_LIST[0]
+        logger.info("ip_address not provided — using default device: %s", ip)
+
     logger.info(
         "nxos_execute_commands called: ip=%s, commands=%s, format=%s, timeout=%s",
-        params.ip_address,
+        ip,
         params.commands,
         params.response_format,
         params.timeout,
@@ -496,7 +519,7 @@ async def nxos_execute_commands(params: SingleDeviceCommandInput) -> str:
     try:
         username, password = get_credentials(params.username, params.password)
         result = await execute_cli_command(
-            ip_address=params.ip_address,
+            ip_address=ip,
             commands=params.commands,
             username=username,
             password=password,
@@ -519,9 +542,17 @@ async def nxos_execute_commands(params: SingleDeviceCommandInput) -> str:
 
 @mcp.tool()
 async def nxos_execute_commands_multi(params: MultiDeviceCommandInput) -> str:
+    # Resolve ip_addresses: use provided list, else fall back to full default device list
+    ips = params.ip_addresses
+    if not ips:
+        if not DEFAULT_DEVICE_LIST:
+            return "Error: No ip_addresses provided and NXOS_HOSTS is not set in .env"
+        ips = DEFAULT_DEVICE_LIST
+        logger.info("ip_addresses not provided — using all default devices: %s", ips)
+
     logger.info(
         "nxos_execute_commands_multi called: ips=%s, commands=%s, continue_on_error=%s, timeout=%s",
-        params.ip_addresses,
+        ips,
         params.commands,
         params.continue_on_error,
         params.timeout,
@@ -529,7 +560,7 @@ async def nxos_execute_commands_multi(params: MultiDeviceCommandInput) -> str:
     try:
         username, password = get_credentials(params.username, params.password)
         results = []
-        for ip in params.ip_addresses:
+        for ip in ips:
             res = await execute_cli_command(
                 ip_address=ip,
                 commands=params.commands,
@@ -547,7 +578,7 @@ async def nxos_execute_commands_multi(params: MultiDeviceCommandInput) -> str:
             output = format_multi_device_text_response(results)
         else:
             summary = {
-                "total_devices": len(params.ip_addresses),
+                "total_devices": len(ips),
                 "successful": sum(1 for r in results if r["success"]),
                 "failed": sum(1 for r in results if not r["success"]),
                 "results": results
