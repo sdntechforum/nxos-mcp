@@ -310,3 +310,5 @@ For issues related to:
 - **NX-API**: Consult Cisco NX-OS documentation
 - **MCP Protocol**: Visit https://modelcontextprotocol.io
 - **This Server**: Review error messages and troubleshooting section
+
+[![MCP Badge](https://lobehub.com/badge/mcp/sdntechforum-nxos-mcp)](https://lobehub.com/mcp/sdntechforum-nxos-mcp)
